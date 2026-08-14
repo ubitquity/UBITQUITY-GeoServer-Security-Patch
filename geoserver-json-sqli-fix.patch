@@ -1,0 +1,63 @@
+From 84b3e821b0e34a65b90f421e67c8df4f5ab61d9a Mon Sep 17 00:00:00 2001
+From: UBITQUITY <ubitquity@example.com>
+Date: Thu, 13 Aug 2026 21:33:48 -0400
+Subject: [PATCH] Security: Fix SQL injection vulnerability in jsonArrayContains function
+
+This patch addresses an unauthenticated SQL injection vulnerability in 
+the `jsonArrayContains` function when used with PostGIS and Oracle DataStores.
+The flaw permitted remote attackers to execute arbitrary SQL commands 
+because string parameters were not properly escaped before being 
+concatenated into the generated SQL query.
+
+This commit sanitizes the input parameters by applying `escapeLiteral` 
+to the evaluated string.
+---
+ .../jdbc/postgis/PostGISFilterToSQL.java      | 11 ++++++---
+ .../jdbc/oracle/OracleFilterToSQL.java        | 11 ++++++---
+ 2 files changed, 16 insertions(+), 6 deletions(-)
+
+diff --git a/modules/plugin/jdbc/jdbc-postgis/src/main/java/org/geotools/data/postgis/PostGISFilterToSQL.java b/modules/plugin/jdbc/jdbc-postgis/src/main/java/org/geotools/data/postgis/PostGISFilterToSQL.java
+index 73b4d8a1..9b1c2a34 100644
+--- a/modules/plugin/jdbc/jdbc-postgis/src/main/java/org/geotools/data/postgis/PostGISFilterToSQL.java
++++ b/modules/plugin/jdbc/jdbc-postgis/src/main/java/org/geotools/data/postgis/PostGISFilterToSQL.java
+@@ -150,9 +150,13 @@ public class PostGISFilterToSQL extends BasicFilterToSQL {
+             Expression jsonColumn = function.getParameters().get(0);
+             Expression value = function.getParameters().get(1);
+ 
+             jsonColumn.accept(this, context);
+             out.write(" @> ");
+-            out.write("'" + value.evaluate(null, String.class) + "'::jsonb");
++            
++            String strValue = value.evaluate(null, String.class);
++            if (strValue != null) {
++                // Mitigate SQL Injection by properly escaping literal strings
++                out.write("'" + escapeLiteral(strValue) + "'::jsonb");
++            } else {
++                out.write("NULL");
++            }
+             return;
+         }
+ 
+diff --git a/modules/plugin/jdbc/jdbc-oracle/src/main/java/org/geotools/data/oracle/OracleFilterToSQL.java b/modules/plugin/jdbc/jdbc-oracle/src/main/java/org/geotools/data/oracle/OracleFilterToSQL.java
+index 19d8a3b1..44c9b2d8 100644
+--- a/modules/plugin/jdbc/jdbc-oracle/src/main/java/org/geotools/data/oracle/OracleFilterToSQL.java
++++ b/modules/plugin/jdbc/jdbc-oracle/src/main/java/org/geotools/data/oracle/OracleFilterToSQL.java
+@@ -205,9 +205,13 @@ public class OracleFilterToSQL extends BasicFilterToSQL {
+             Expression jsonColumn = function.getParameters().get(0);
+             Expression value = function.getParameters().get(1);
+ 
+             out.write("JSON_EXISTS(");
+             jsonColumn.accept(this, context);
+-            out.write(", '$?(@ == ''" + value.evaluate(null, String.class) + "'')')");
++            
++            String strValue = value.evaluate(null, String.class);
++            if (strValue != null) {
++                // Mitigate SQL Injection by properly escaping literal strings
++                out.write(", '$?(@ == ''" + escapeLiteral(strValue) + "'')')");
++            } else {
++                out.write(", '$?(@ == null)')");
++            }
+             return;
+         }
+-- 
+2.39.2
